@@ -12,9 +12,9 @@ class CommandFailedError(Exception):
     """Used to signal a failed command execution by the `must()` wrapper
     function"""
 
-    def __init__(self, *args, out=None, err=None, ret=None):
-        self.out = out
-        self.err = err
+    def __init__(self, *args, stdout=None, stderr=None, ret=None):
+        self.stdout = stdout
+        self.stderr = stderr
         self.ret = ret
         super().__init__(*args)
 
@@ -24,7 +24,7 @@ def must(out, err, ret):
     CommandFailedError exception if a command returns a nonzero exit code"""
 
     if ret != 0:
-        raise CommandFailedError(out=out, err=err, ret=ret)
+        raise CommandFailedError(stdout=out, stderr=err, ret=ret)
 
     return out, err
 
@@ -36,9 +36,14 @@ def main():
     try:
         servera = net.nameToNode["servera"]
         serverb = net.nameToNode["serverb"]
-        devx = net.nameToNode['devx']
-        devy = net.nameToNode['devy']
+        devx = net.nameToNode["devx"]
+        devy = net.nameToNode["devy"]
+
+        # pylint: disable=invalid-name
         r0 = net.nameToNode["r0"]
+
+        servera_wg0_addr = next(net.topo.vpn_addr)
+        serverb_wg0_addr = next(net.topo.vpn_addr)
 
         info("configuring routes on serverb devices\n")
         for host in [serverb, devx, devy]:
@@ -57,36 +62,23 @@ def main():
             must(*host.pexec("ip link add wg0 type wireguard", shell=True))
 
         info("creating private keys\n")
-        servera_priv = subprocess.check_output(["wg", "genkey"])
-        serverb_priv = subprocess.check_output(["wg", "genkey"])
-
-        with open("servera.private", "wb") as fd:
-            fd.write(servera_priv)
-
-        with open("serverb.private", "wb") as fd:
-            fd.write(serverb_priv)
-
-        info("creating public keys\n")
-        servera_pub = (
-            subprocess.check_output(["wg", "pubkey"], input=servera_priv)
-            .decode()
-            .strip()
-        )
-        serverb_pub = (
-            subprocess.check_output(["wg", "pubkey"], input=serverb_priv)
-            .decode()
-            .strip()
-        )
+        servera_pub = subprocess.check_output(
+            "wg genkey | tee servera.private | wg pubkey", shell=True
+        ).decode()
+        serverb_pub = subprocess.check_output(
+            "wg genkey | tee serverb.private | wg pubkey", shell=True
+        ).decode()
 
         info("configuring vpn\n")
-        servera_wg0_addr = next(net.topo.vpn_addr)
-        serverb_wg0_addr = next(net.topo.vpn_addr)
+
         must(*servera.pexec(f"ip addr add {servera_wg0_addr} dev wg0", shell=True))
-        out, err, ret = servera.pexec(
-            "wg set wg0 listen-port 51820 private-key servera.private "
-            f"peer {serverb_pub} "
-            f"allowed-ips {net.topo.serverb_net},{net.topo.vpn_net}",
-            shell=True,
+        must(
+            *servera.pexec(
+                "wg set wg0 listen-port 51820 private-key servera.private "
+                f"peer {serverb_pub} "
+                f"allowed-ips {net.topo.serverb_net},{net.topo.vpn_net}",
+                shell=True,
+            )
         )
         must(*servera.pexec("ip link set wg0 up", shell=True))
 
@@ -117,13 +109,7 @@ def main():
         )
         must(
             *r0.pexec(
-                f"ip route add {net.topo.servera_net} via {serverb.intfs[0].ip.split('/')[0]}",
-                shell=True,
-            )
-        )
-
-        must(
-            *r0.pexec(
+                f"ip route add {net.topo.servera_net} via {serverb.intfs[0].ip.split('/')[0]} && "
                 f"ip route add {net.topo.vpn_net} via {serverb.intfs[0].ip.split('/')[0]}",
                 shell=True,
             )
@@ -136,7 +122,7 @@ def main():
 
         CLI(net)
     except CommandFailedError as err:
-        error(f"command failed with status {err.ret}: {err.err}")
+        error(f"command failed with status {err.ret}: {err.stderr}")
     finally:
         net.stop()
 
