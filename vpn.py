@@ -45,6 +45,9 @@ def main():
         servera_wg0_addr = next(net.topo.vpn_addr)
         serverb_wg0_addr = next(net.topo.vpn_addr)
 
+        info("enable ip forwarding\n")
+        subprocess.check_call("sysctl -w net.ipv4.ip_forward=1", shell=True)
+
         info("configuring routes on serverb devices\n")
         for host in [serverb, devx, devy]:
             must(*host.pexec("ip route add default via 192.168.27.1", shell=True))
@@ -62,12 +65,20 @@ def main():
             must(*host.pexec("ip link add wg0 type wireguard", shell=True))
 
         info("creating private keys\n")
-        servera_pub = subprocess.check_output(
-            "wg genkey | tee servera.private | wg pubkey", shell=True
-        ).decode()
-        serverb_pub = subprocess.check_output(
-            "wg genkey | tee serverb.private | wg pubkey", shell=True
-        ).decode()
+        servera_pub = (
+            subprocess.check_output(
+                "wg genkey | tee servera.private | wg pubkey", shell=True
+            )
+            .decode()
+            .strip()
+        )
+        serverb_pub = (
+            subprocess.check_output(
+                "wg genkey | tee serverb.private | wg pubkey", shell=True
+            )
+            .decode()
+            .strip()
+        )
 
         info("configuring vpn\n")
 
@@ -75,8 +86,8 @@ def main():
         must(
             *servera.pexec(
                 "wg set wg0 listen-port 51820 private-key servera.private "
-                f"peer {serverb_pub} "
-                f"allowed-ips {net.topo.serverb_net},{net.topo.vpn_net}",
+                f'peer "{serverb_pub}" '
+                f'allowed-ips "{net.topo.serverb_net},{net.topo.vpn_net}"',
                 shell=True,
             )
         )
@@ -86,9 +97,9 @@ def main():
         must(
             *serverb.pexec(
                 "wg set wg0 listen-port 51820 private-key serverb.private "
-                f"peer {servera_pub} "
-                f"allowed-ips {net.topo.servera_net},{net.topo.vpn_net} "
-                f'endpoint {servera.intfs[1].ip.split("/")[0]}:51820',
+                f'peer "{servera_pub}" '
+                f'allowed-ips "{net.topo.servera_net},{net.topo.vpn_net}" '
+                f'endpoint "{servera.intfs[1].ip.split("/")[0]}:51820"',
                 shell=True,
             )
         )
