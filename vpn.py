@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 from mininet.cli import CLI
 from mininet.log import info, error, setLogLevel
@@ -30,6 +31,11 @@ def must(out, err, ret):
 
 
 def main():
+    ip_forward = subprocess.check_output("sysctl net.ipv4.ip_forward", shell=True)
+    if ip_forward.decode().strip().split()[-1] != "1":
+        info("enabling ip forwarding\n")
+        subprocess.check_call("sysctl -w net.ipv4.ip_forward=1", shell=True)
+
     net = Mininet(topo=pvtnet.PvtNet(), switch=OVSBridge)
     net.start()
 
@@ -44,9 +50,6 @@ def main():
 
         servera_wg0_addr = next(net.topo.vpn_addr)
         serverb_wg0_addr = next(net.topo.vpn_addr)
-
-        info("enable ip forwarding\n")
-        subprocess.check_call("sysctl -w net.ipv4.ip_forward=1", shell=True)
 
         info("configuring routes on serverb devices\n")
         for host in [serverb, devx, devy]:
